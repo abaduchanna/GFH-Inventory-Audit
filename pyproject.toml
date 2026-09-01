@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vidapay-gfh"
+name = "gfh-inventory-audit"
 version = "1.0.0"
-description = "VidaPay GFH Accessories Ordering + Inventory Audit"
+description = "GFH Inventory Audit + Timesheet automation"
 requires-python = ">=3.11"
 authors = [
     { name = "Abad Umair Channa" }
