@@ -2424,7 +2424,12 @@ class WhatsAppSender:
             win32gui.EnumWindows(_cb, None)
             if found:
                 hwnd = found[0]
-                ctypes.windll.user32.ShowWindow(hwnd, 9)   # SW_RESTORE
+                # Only un-minimize WhatsApp. If it is MAXIMIZED, leave it
+                # maximized - calling SW_RESTORE on a zoomed window
+                # un-maximizes it, and WhatsApp visibly re-flows its whole
+                # layout on every send ("window layout changed").
+                if ctypes.windll.user32.IsIconic(hwnd):
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)   # SW_RESTORE
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
                 time.sleep(1.0)
                 return True
