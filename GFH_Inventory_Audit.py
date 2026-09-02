@@ -2561,48 +2561,6 @@ class GFHApp(tk.Tk):
         except Exception:
             pass
 
-    def _repaint_band(self, event=None):
-        """Repaint the Verge texture + centered app title on the header canvas."""
-        canvas = getattr(self, "_band_canvas", None)
-        painter = getattr(self, "_draw_band_texture", None)
-        if canvas is None or painter is None:
-            return
-        try:
-            canvas.delete("band_title")
-            painter(canvas, "header")
-            width = int(canvas.winfo_width())
-            height = int(canvas.winfo_height())
-            if width > 2 and height > 2:
-                canvas.create_text(
-                    width / 2, height / 2, text=APP_NAME,
-                    font=("Segoe UI", 19, "bold"), fill="#ffffff",
-                    tags=("band_title",),
-                )
-        except Exception:
-            pass
-
-    def _repaint_footer_bar(self, event=None):
-        """Repaint the Verge texture + centered copyright on the footer canvas."""
-        canvas = getattr(self, "_footer_canvas", None)
-        painter = getattr(self, "_draw_footer_texture", None)
-        if canvas is None or painter is None:
-            return
-        try:
-            canvas.delete("band_text")
-            painter(canvas, "footer")
-            width = int(canvas.winfo_width())
-            height = int(canvas.winfo_height())
-            if width > 2 and height > 2:
-                canvas.create_text(
-                    width / 2, height / 2,
-                    text=(f"Developed by Abad Umair Channa | Copyright \u00a9 "
-                          f"{date.today().year} | All rights reserved."),
-                    font=("Segoe UI", 8), fill="#c7cbe0",
-                    tags=("band_text",),
-                )
-        except Exception:
-            pass
-
     def _apply_styles(self) -> None:
         sz = lambda n: max(6, round(n * self.zoom_scale))
         s = self._style
@@ -2711,21 +2669,6 @@ class GFHApp(tk.Tk):
         _clbl.pack(expand=True, fill="both")
         _clbl._tag = "footer"
 
-        # ── Verge-style texture on the copyright bar: green arc bottom-left.
-        # The canvas covers the plain label, so the copyright text is
-        # re-drawn on the canvas as well (see _repaint_footer_bar).
-        try:
-            from theme_manager import draw_band_texture as _draw_footer_texture
-            self._draw_footer_texture = _draw_footer_texture
-            self._footer_canvas = tk.Canvas(_cbar, bg="#090d26",
-                                            highlightthickness=0, bd=0)
-            self._footer_canvas.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
-            self._footer_canvas.lift(_clbl)
-            _cbar.bind("<Configure>", self._repaint_footer_bar)
-            _cbar.after_idle(self._repaint_footer_bar)
-        except Exception:
-            self._footer_canvas = None
-
 
         root = ttk.Frame(self, padding=14)
         root.pack(fill="both", expand=True)
@@ -2759,23 +2702,6 @@ class GFHApp(tk.Tk):
         _title_lbl = ttk.Label(header, text=APP_NAME, style="Header.TLabel", anchor="center")
         _title_lbl.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
         _title_lbl.lower()
-
-        # ── Verge-style abstract texture on the header band ──
-        # Canvas sits ABOVE the flat navy title label and BELOW the packed
-        # edge widgets (logo, divider); it paints the abstract circles and
-        # re-draws the centered title, because its own surface covers the
-        # plain label below it (see _repaint_band).
-        try:
-            from theme_manager import draw_band_texture
-            self._draw_band_texture = draw_band_texture
-            self._band_canvas = tk.Canvas(header, bg=self.COLOR_NAVY,
-                                          highlightthickness=0, bd=0)
-            self._band_canvas.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
-            self._band_canvas.lift(_title_lbl)
-            header.bind("<Configure>", self._repaint_band)
-            header.after_idle(self._repaint_band)
-        except Exception:
-            self._band_canvas = None
 
         file_box = ttk.LabelFrame(root, text="Upload Files", padding=10)
         file_box.pack(fill="x", pady=(12, 8))
