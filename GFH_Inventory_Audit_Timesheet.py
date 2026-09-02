@@ -2756,7 +2756,7 @@ class GFHApp(tk.Tk):
         self.status_checked_keys: set[str] = set()
         self.audit_checked_keys: set[str] = set()
 
-        self.theme_manager = ThemeManager("GFH Inventory Audit", app_name="vidapay-gfh")
+        self.theme_manager = ThemeManager("GFH Inventory Audit", app_name="VidaPay-GFH")
         # Always start dark — override any saved light preference
         self.theme_manager.current_theme = "dark"
         self._build_ui()
@@ -2850,6 +2850,48 @@ class GFHApp(tk.Tk):
             self.resizable(True, True)
             # Always open maximized (issue: window was too small on first launch)
             self.after(10, lambda: self.state("zoomed"))
+        except Exception:
+            pass
+
+    def _repaint_band(self, event=None):
+        """Repaint the Verge texture + centered app title on the header canvas."""
+        canvas = getattr(self, "_band_canvas", None)
+        painter = getattr(self, "_draw_band_texture", None)
+        if canvas is None or painter is None:
+            return
+        try:
+            canvas.delete("band_title")
+            painter(canvas, "header")
+            width = int(canvas.winfo_width())
+            height = int(canvas.winfo_height())
+            if width > 2 and height > 2:
+                canvas.create_text(
+                    width / 2, height / 2, text=APP_NAME,
+                    font=("Segoe UI", 18, "bold"), fill="#ffffff",
+                    tags=("band_title",),
+                )
+        except Exception:
+            pass
+
+    def _repaint_footer_bar(self, event=None):
+        """Repaint the Verge texture + centered copyright on the footer canvas."""
+        canvas = getattr(self, "_footer_canvas", None)
+        painter = getattr(self, "_draw_footer_texture", None)
+        if canvas is None or painter is None:
+            return
+        try:
+            canvas.delete("band_text")
+            painter(canvas, "footer")
+            width = int(canvas.winfo_width())
+            height = int(canvas.winfo_height())
+            if width > 2 and height > 2:
+                canvas.create_text(
+                    width / 2, height / 2,
+                    text=(f"Developed by Abad Umair Channa | Copyright \u00a9 "
+                          f"{date.today().year} | All rights reserved."),
+                    font=("Segoe UI", 8), fill="#c7cbe0",
+                    tags=("band_text",),
+                )
         except Exception:
             pass
 
@@ -2965,6 +3007,21 @@ class GFHApp(tk.Tk):
         _clbl.pack(expand=True, fill="both")
         _clbl._tag = "footer"
 
+        # ── Verge-style texture on the copyright bar: green arc bottom-left.
+        # The canvas covers the plain label, so the copyright text is
+        # re-drawn on the canvas as well (see _repaint_footer_bar).
+        try:
+            from theme_manager import draw_band_texture as _draw_footer_texture
+            self._draw_footer_texture = _draw_footer_texture
+            self._footer_canvas = tk.Canvas(_cbar, bg="#090d26",
+                                            highlightthickness=0, bd=0)
+            self._footer_canvas.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+            self._footer_canvas.lift(_clbl)
+            _cbar.bind("<Configure>", self._repaint_footer_bar)
+            _cbar.after_idle(self._repaint_footer_bar)
+        except Exception:
+            self._footer_canvas = None
+
 
         header = tk.Frame(self, bg=self.COLOR_NAVY, height=90)
         header.pack(fill="x")
@@ -3017,6 +3074,23 @@ class GFHApp(tk.Tk):
         _title_lbl.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
         _title_lbl.lower()
         _title_lbl._tag = "header"
+
+        # ── Verge-style abstract texture on the header band ──
+        # Canvas sits ABOVE the flat navy title label and BELOW the packed
+        # edge widgets (logo, divider, theme toggle); it paints the abstract
+        # circles and re-draws the centered title, because its own surface
+        # covers the plain label below it (see _repaint_band).
+        try:
+            from theme_manager import draw_band_texture
+            self._draw_band_texture = draw_band_texture
+            self._band_canvas = tk.Canvas(header, bg=self.COLOR_NAVY,
+                                          highlightthickness=0, bd=0)
+            self._band_canvas.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+            self._band_canvas.lift(_title_lbl)
+            header.bind("<Configure>", self._repaint_band)
+            header.after_idle(self._repaint_band)
+        except Exception:
+            self._band_canvas = None
 
         root = ttk.Frame(self, padding=14)
         root.pack(fill="both", expand=True)
