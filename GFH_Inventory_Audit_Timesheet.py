@@ -5175,13 +5175,18 @@ class GFHApp(tk.Tk):
         """Build the per-store reminder sent after the Inventory Audit Status
         image.
 
-        Format per task spec — one plain line per pending store, blocks
-        separated by a blank line:
+        Each pending store is addressed by the PERSON responsible whenever
+        the row has one (the Salesperson column — which also carries the
+        timesheet-matched employee for stores absent from the count file):
 
-            {Store Name}, please complete the inventory count ASAP.
+        1. Rep has a phone on file (Employees tab / sales reps): tag it —
+               @<phone>, please complete the inventory count ASAP.
+        2. Rep known but no phone anywhere: address the person by name —
+               <Rep Name>, please complete the inventory count ASAP.
+        3. No rep on the row: fall back to the store name —
+               <Store Name>, please complete the inventory count ASAP.
 
-        No "⚠️ … — Count not completed" header, no "Employee at store:"
-        line, and no WhatsApp @mention — just the store name and the ask.
+        One line per pending store, blocks separated by a blank line.
         """
         messages: List[str] = []
         seen_stores: set[str] = set()
@@ -5194,6 +5199,19 @@ class GFHApp(tk.Tk):
             if not store_name or store_name in seen_stores:
                 continue
             seen_stores.add(store_name)
+
+            rep_name = safe_text(row.rep_name)
+            if rep_name:
+                phone = normalize_phone(self.db.resolve_phone_for_rep(rep_name))
+                if phone:
+                    messages.append(
+                        f"{whatsapp_mention(phone)}, please complete the inventory count ASAP."
+                    )
+                    continue
+                messages.append(
+                    f"{rep_name}, please complete the inventory count ASAP."
+                )
+                continue
 
             messages.append(f"{store_name}, please complete the inventory count ASAP.")
 
