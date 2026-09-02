@@ -4553,9 +4553,11 @@ class GFHApp(tk.Tk):
                 continue
 
             rep_name = safe_text(row.rep_name)
-            phone = normalize_phone(self.db.find_sales_rep_phone(rep_name)) if rep_name else ""
-            if phone:
-                target = whatsapp_mention(phone)
+            if rep_name:
+                # No phone on file? Address the PERSON by name instead of the
+                # store — same behavior as the Timesheet edition.
+                phone = normalize_phone(self.db.find_sales_rep_phone(rep_name))
+                target = whatsapp_mention(phone) if phone else rep_name
             else:
                 target = safe_text(row.store)
 

@@ -1,24 +1,26 @@
 """Regression tests for the pending inventory count WhatsApp reminder.
 
-The message used to be a verbose block:
+Per pending store the line addresses the PERSON responsible whenever the
+row has one (the Salesperson column — which also carries the timesheet-
+matched employee for stores absent from the count file):
 
-    ⚠️ {Store} — Count not completed
-    Employee at store: (no timesheet entry for this store)
-
-Per task spec it must now be one plain line per pending store:
-
-    {Store}, please complete the inventory count ASAP.
+    1. Rep has a phone on file (Employees tab / sales reps): tag it —
+           @<phone>, please complete the inventory count ASAP.
+    2. Rep known but no phone anywhere: address the person by name —
+           <Rep Name>, please complete the inventory count ASAP.
+    3. No rep on the row: fall back to the store name —
+           <Store Name>, please complete the inventory count ASAP.
 
 These tests extract ``pending_inventory_count_message`` (plus its
-dependencies ``safe_text`` and ``InventoryStatusRow``) from the standalone
-``GFH_Inventory_Audit_Timesheet.py`` script via the AST, so no GUI /
-selenium imports are needed.
+dependencies ``safe_text``, ``normalize_phone``, ``whatsapp_mention`` and
+``InventoryStatusRow``) from the standalone ``GFH_Inventory_Audit_Timesheet.py``
+script via the AST, so no GUI / selenium imports are needed.
 """
 import ast
-import sys
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -35,34 +37,54 @@ FORBIDDEN_TEXTS = (
 
 def _extract_sources():
     tree = ast.parse(SCRIPT.read_text(encoding="utf-8"), filename=str(SCRIPT))
-    safe_text_src = None
-    status_row_src = None
-    pending_msg_src = None
+    wanted_funcs = ("safe_text", "normalize_phone", "whatsapp_mention")
+    sources: dict = {"func": {}, "row": None, "pending": None}
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "safe_text":
-            safe_text_src = ast.unparse(node)
+        if isinstance(node, ast.FunctionDef) and node.name in wanted_funcs:
+            sources["func"][node.name] = ast.unparse(node)
         if isinstance(node, ast.ClassDef) and node.name == "InventoryStatusRow":
-            status_row_src = ast.unparse(node)
+            sources["row"] = ast.unparse(node)
         if isinstance(node, ast.ClassDef):
             for child in node.body:
                 if (
                     isinstance(child, ast.FunctionDef)
                     and child.name == "pending_inventory_count_message"
                 ):
-                    pending_msg_src = ast.unparse(child)
-    if not (safe_text_src and status_row_src and pending_msg_src):
-        raise RuntimeError("Could not extract required definitions from script")
-    return safe_text_src, status_row_src, pending_msg_src
+                    sources["pending"] = ast.unparse(child)
+    missing = [f for f in wanted_funcs if f not in sources["func"]]
+    if missing or not sources["row"] or not sources["pending"]:
+        raise RuntimeError(f"Could not extract required definitions: missing {missing}")
+    return sources
 
 
-SAFE_TEXT_SRC, STATUS_ROW_SRC, PENDING_MSG_SRC = _extract_sources()
+SOURCES = _extract_sources()
+
+
+class FakeDB:
+    """Employees-tab aware phone resolver stub."""
+
+    def __init__(self, phones: dict):
+        self.phones = phones
+        self.asked: list = []
+
+    def resolve_phone_for_rep(self, rep_name, created_by=""):
+        self.asked.append(rep_name)
+        return self.phones.get(rep_name, "")
+
+
+class NoLookupDB:
+    """Sentinel — must never be touched when a row carries no rep name."""
+
+    def resolve_phone_for_rep(self, *a, **k):
+        raise AssertionError("resolve_phone_for_rep must not be called without a rep name")
 
 
 def _make_namespace():
     ns = {"dataclass": dataclass, "List": List}
-    exec(SAFE_TEXT_SRC, ns)
-    exec(STATUS_ROW_SRC, ns)
-    exec(PENDING_MSG_SRC, ns)
+    for name in ("safe_text", "normalize_phone", "whatsapp_mention"):
+        exec(SOURCES["func"][name], ns)
+    exec(SOURCES["row"], ns)
+    exec(SOURCES["pending"], ns)
     return ns
 
 
@@ -74,7 +96,6 @@ class TestPendingInventoryCountMessage(unittest.TestCase):
         # staticmethod: prevent Python from binding the plain function as a
         # method when accessed through self (which would shift the args).
         cls.fn = staticmethod(ns["pending_inventory_count_message"])
-        cls.db_never_called = object()  # sentinel; function must not touch self.db
 
     def _row(self, store, status="Pending", rep=""):
         return self.InventoryStatusRow(
@@ -82,13 +103,16 @@ class TestPendingInventoryCountMessage(unittest.TestCase):
             status=status, rep_name=rep,
         )
 
-    def test_user_reported_example(self):
-        """Exact user scenario: two pending stores, no timesheet entries."""
-        rows = [
-            self._row("Kings highway store"),
-            self._row("Hollywood Store"),
-        ]
-        message = self.fn(self.db_never_called, rows)
+    def _call(self, rows, db):
+        return self.fn(SimpleNamespace(db=db), rows)
+
+    # ── case 3: no rep on the row ─────────────────────────────────────────
+
+    def test_user_reported_example_no_rep(self):
+        """Exact original scenario: two pending stores, no rep names."""
+        rows = [self._row("Kings highway store"), self._row("Hollywood Store")]
+        db = NoLookupDB()
+        message = self._call(rows, db)
         self.assertEqual(
             message,
             "Kings highway store, please complete the inventory count ASAP.\n\n"
@@ -97,7 +121,7 @@ class TestPendingInventoryCountMessage(unittest.TestCase):
 
     def test_no_verbose_block(self):
         rows = [self._row("Kings highway store"), self._row("Hollywood Store")]
-        message = self.fn(self.db_never_called, rows)
+        message = self._call(rows, NoLookupDB())
         for forbidden in FORBIDDEN_TEXTS:
             self.assertNotIn(forbidden, message)
 
@@ -106,30 +130,90 @@ class TestPendingInventoryCountMessage(unittest.TestCase):
             self._row("Done Store", status="Completed"),
             self._row("Pending Store", status="Pending"),
         ]
-        message = self.fn(self.db_never_called, rows)
+        message = self._call(rows, NoLookupDB())
         self.assertEqual(message, "Pending Store, please complete the inventory count ASAP.")
 
     def test_duplicate_store_deduped(self):
-        rows = [
-            self._row("Kings highway store"),
-            self._row("Kings highway store"),
-        ]
-        message = self.fn(self.db_never_called, rows)
+        rows = [self._row("Kings highway store"), self._row("Kings highway store")]
+        message = self._call(rows, NoLookupDB())
         self.assertEqual(message, "Kings highway store, please complete the inventory count ASAP.")
 
     def test_all_completed_returns_empty(self):
         rows = [self._row("Done Store", status="Completed")]
-        self.assertEqual(self.fn(self.db_never_called, rows), "")
+        self.assertEqual(self._call(rows, NoLookupDB()), "")
 
     def test_empty_rows_returns_empty(self):
-        self.assertEqual(self.fn(self.db_never_called, []), "")
+        self.assertEqual(self._call([], NoLookupDB()), "")
 
-    def test_no_mention_even_with_rep(self):
-        """The new format must not include WhatsApp @mention lines."""
-        rows = [self._row("Kings highway store", rep="Abad Channa")]
-        message = self.fn(self.db_never_called, rows)
-        self.assertEqual(message, "Kings highway store, please complete the inventory count ASAP.")
-        self.assertNotIn("@", message)
+    # ── case 1: rep with a phone on file → tag the number ─────────────────
+
+    def test_rep_with_phone_is_tagged(self):
+        rows = [self._row("N 19th Store", rep="Adithya Mosam")]
+        db = FakeDB({"Adithya Mosam": "+1 404 555 1234"})
+        message = self._call(rows, db)
+        self.assertEqual(
+            message,
+            "@+14045551234, please complete the inventory count ASAP.",
+        )
+        self.assertEqual(db.asked, ["Adithya Mosam"])
+
+    def test_tagged_phone_drops_store_name(self):
+        """The tag replaces the store reference, per spec."""
+        rows = [self._row("South Central Store", rep="Dua E Batool")]
+        db = FakeDB({"Dua E Batool": "404-555-9876"})
+        message = self._call(rows, db)
+        self.assertEqual(message, "@4045559876, please complete the inventory count ASAP.")
+        self.assertNotIn("South Central", message)
+
+    def test_phone_lookup_uses_employees_tab_cascade(self):
+        """resolve_phone_for_rep (Employees tab + sales reps) is the lookup —
+        not just the sales-reps table."""
+        rows = [self._row("Phoenix Store", rep="Abhay Surya Sanjay Kumar")]
+        db = FakeDB({"Abhay Surya Sanjay Kumar": "+1 602 555 0101"})
+        message = self._call(rows, db)
+        self.assertTrue(message.startswith("@+16025550101,"))
+
+    # ── case 2: rep known but no phone → person's name instead of store ───
+
+    def test_rep_without_phone_named_instead_of_store(self):
+        rows = [self._row("N 19th Store", rep="Adithya Mosam")]
+        message = self._call(rows, FakeDB({}))
+        self.assertEqual(
+            message,
+            "Adithya Mosam, please complete the inventory count ASAP.",
+        )
+        self.assertNotIn("N 19th", message)
+
+    def test_screenshot_scenario_both_reps_no_phones(self):
+        """The exact screenshot case: two pending stores, both with
+        salesperson names, no phones on file → both lines use the person."""
+        rows = [
+            self._row("N 19th Store", rep="Adithya Mosam"),
+            self._row("South Central Store", rep="Dua E Batool"),
+        ]
+        message = self._call(rows, FakeDB({}))
+        self.assertEqual(
+            message,
+            "Adithya Mosam, please complete the inventory count ASAP.\n\n"
+            "Dua E Batool, please complete the inventory count ASAP.",
+        )
+
+    # ── mixed rows keep per-store order ───────────────────────────────────
+
+    def test_mixed_rows_full_cascade(self):
+        rows = [
+            self._row("Tagged Store", rep="Rep One"),
+            self._row("Named Store", rep="Rep Two"),
+            self._row("Plain Store"),
+        ]
+        db = FakeDB({"Rep One": "+1 404 555 0001"})
+        message = self._call(rows, db)
+        self.assertEqual(
+            message,
+            "@+14045550001, please complete the inventory count ASAP.\n\n"
+            "Rep Two, please complete the inventory count ASAP.\n\n"
+            "Plain Store, please complete the inventory count ASAP.",
+        )
 
 
 if __name__ == "__main__":
