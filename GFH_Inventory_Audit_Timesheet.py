@@ -1502,6 +1502,15 @@ class VarianceDatabase:
                 con.execute("ALTER TABLE device_exclusions ADD COLUMN comments TEXT DEFAULT ''")
             if "district" not in exclusion_columns:
                 con.execute("ALTER TABLE device_exclusions ADD COLUMN district TEXT DEFAULT ''")
+            # IMEI-ONLY exclusions (user rule 2026-09-15): purge legacy
+            # product-level rules on every startup — a whole product can
+            # never be excluded; a device only goes missing when its exact
+            # IMEI is in the exclude list. Pre-schema IMEI-Exact rows
+            # (imei column empty, rule_text = IMEI) survive the purge.
+            con.execute(
+                "DELETE FROM device_exclusions WHERE TRIM(COALESCE(imei, '')) = '' "
+                "AND NOT (TRIM(COALESCE(rule_text, '')) <> '' AND REPLACE(LOWER(COALESCE(match_type, '')), ' ', '') IN ('imeiexact', 'serialexact', 'esnexact'))"
+            )
 
             # Created By → Employee mapping table (Timesheet Edition)
             con.execute("""
@@ -2062,31 +2071,27 @@ class VarianceDatabase:
         comments = safe_text(comments)
         district = normalize_district(district) if safe_text(district) else ""
 
-        if not product and not imei:
-            raise ValueError("Product or IMEI is required.")
-
+        # IMEI-ONLY exclusions (user rule 2026-09-15): the exclude list hides
+        # a device only by its exact IMEI. Whole products can never be
+        # excluded — a product-only request is rejected and the app asks for
+        # the IMEI(s) instead. Product is kept on the row for display only.
+        if not imei:
+            raise ValueError(
+                "IMEI is required — whole products cannot be excluded. "
+                "Enter the IMEI(s) of the specific device(s) to hide."
+            )
         # IMEI exclusions stay global across all districts.
-        if imei:
-            district = ""
-            rule_text = imei
-            match_type = "IMEI Exact"
-        else:
-            if not district or district == "Unknown":
-                raise ValueError("District is required for Product exclusions.")
-            rule_text = product
-            match_type = "Product Contains"
+        district = ""
+        rule_text = imei
+        match_type = "IMEI Exact"
 
-        # Include district in product exclusion key, but keep IMEI exclusions global.
-        rule_key = device_rule_key(f"{district}|{product}|{imei}" if not imei else f"|{imei}")
+        rule_key = device_rule_key(f"|{imei}")
         if not rule_key:
-            raise ValueError("Product or IMEI is required.")
+            raise ValueError("IMEI is required.")
 
         with self.connect() as con:
-            # Prevent duplicates by ensuring old keys or un-districted versions are cleaned up
-            if imei:
-                con.execute("DELETE FROM device_exclusions WHERE imei=?", (imei,))
-            elif product and district:
-                con.execute("DELETE FROM device_exclusions WHERE product=? AND district=?", (product, district))
+            # Dedupe: one rule per IMEI.
+            con.execute("DELETE FROM device_exclusions WHERE imei=?", (imei,))
 
             con.execute(
                 """
@@ -2155,42 +2160,31 @@ class VarianceDatabase:
         return out
 
     def is_device_excluded(self, district: str, product: str, imei: str) -> bool:
-        row_district = normalize_district(district)
-        product_clean = device_rule_key(product)
+        # IMEI-ONLY exclusions (user rule 2026-09-15): a device is hidden
+        # only when its exact IMEI is in the exclude list — every other
+        # device must show in the Variance Audit. Product-level exclusion is
+        # not allowed; the district argument stays for call-site
+        # compatibility but no longer participates in matching.
         imei_clean = device_rule_key(imei)
+        if not imei_clean:
+            return False
 
         for rule in self.device_exclusions():
-            rule_product = device_rule_key(rule.get("Product", ""))
             rule_imei = device_rule_key(rule.get("IMEI", ""))
-            rule_district = normalize_district(rule.get("District", "")) if safe_text(rule.get("District", "")) else ""
-
-            # IMEI exclusions stay global. District is ignored for IMEI.
-            if rule_imei and imei_clean and rule_imei == imei_clean:
+            if rule_imei and rule_imei == imei_clean:
                 return True
-
-            # Product exclusions are district-specific only.
-            if rule_product and product_clean and rule_product in product_clean:
-                if rule_district and normalize_district(rule_district) == row_district:
-                    return True
 
         return False
 
     def exclusion_reason(self, district: str, product: str, imei: str) -> str:
-        row_district = normalize_district(district)
-        product_clean = device_rule_key(product)
+        # IMEI-ONLY exclusions (user rule 2026-09-15) — see
+        # is_device_excluded: only an exact IMEI match produces a reason.
         imei_clean = device_rule_key(imei)
 
         for rule in self.device_exclusions():
-            rule_product = device_rule_key(rule.get("Product", ""))
             rule_imei = device_rule_key(rule.get("IMEI", ""))
-            rule_district = normalize_district(rule.get("District", "")) if safe_text(rule.get("District", "")) else ""
-
             if rule_imei and imei_clean and rule_imei == imei_clean:
                 return f"IMEI: {rule.get('IMEI', '')}"
-
-            if rule_product and product_clean and rule_product in product_clean:
-                if rule_district and normalize_district(rule_district) == row_district:
-                    return f"{rule_district} Product: {rule.get('Product', '')}"
 
         return ""
 
@@ -4363,10 +4357,17 @@ class GFHApp(tk.Tk):
                     product = found_product
                     self.exclusion_product_var.set(found_product)
 
+            # IMEI-ONLY exclusions (user rule 2026-09-15): the IMEI is the
+            # exclusion — whole products cannot be excluded. A product-only
+            # entry is rejected and the app asks for the IMEI(s) instead.
+            if not safe_text(imei):
+                raise ValueError(
+                    "IMEI is required — whole products cannot be excluded. "
+                    "Enter the IMEI(s) of the specific device(s) to exclude."
+                )
             # IMEI exclusions stay global and ignore district.
-            if safe_text(imei):
-                district = ""
-                self.exclusion_district_var.set("")
+            district = ""
+            self.exclusion_district_var.set("")
 
             selected_key = self.selected_exclusion_key_var.get().strip()
             if selected_key:
@@ -4447,10 +4448,10 @@ class GFHApp(tk.Tk):
             imei_col = find_column(sample, ["IMEI", "IMEI Number", "ESN", "ESN Number", "Serial", "Serial 1", "Device ID"])
             comments_col = find_column(sample, ["Comments", "Comment", "Notes", "Note", "Reason"])
 
-            if not product_col and not imei_col:
+            if not imei_col:
                 messagebox.showerror(
                     "Missing columns",
-                    "Import file needs at least Product or IMEI. Supported headers: District, Product, IMEI, Comments.",
+                    "Import file needs an IMEI column — exclusions are IMEI-level only. Supported headers: District, Product, IMEI, Comments.",
                 )
                 return
 
@@ -4465,23 +4466,22 @@ class GFHApp(tk.Tk):
                 if imei and not product:
                     product = self.product_for_imei_from_loaded_rows(imei)
 
-                # IMEI exclusions ignore district. Product exclusions require district.
-                if imei:
-                    district = ""
-                elif product and (not district or district == "Unknown"):
+                # IMEI-ONLY exclusions (user rule 2026-09-15): rows without
+                # an IMEI cannot be imported — whole products cannot be
+                # excluded. The app asks for the IMEI(s) instead.
+                if not imei:
                     skipped += 1
                     continue
 
-                if not product and not imei:
-                    skipped += 1
-                    continue
+                # IMEI exclusions ignore district.
+                district = ""
 
                 self.db.save_device_exclusion(product, imei, comments, district)
                 imported += 1
 
             self.refresh_device_exclusions_table()
             self.refresh_table()
-            messagebox.showinfo("Import complete", f"Imported {imported} exclusion row(s).\nSkipped {skipped} invalid row(s).\n\nProduct exclusions require District. IMEI exclusions are global.")
+            messagebox.showinfo("Import complete", f"Imported {imported} exclusion row(s).\nSkipped {skipped} invalid row(s).\n\nExclusions are IMEI-level only — whole products cannot be excluded. Provide the IMEI(s) of any device that must be hidden.")
             self.set_status(f"Imported excluded devices. Imported: {imported}. Skipped: {skipped}.")
         except Exception as exc:
             traceback.print_exc()
@@ -5252,6 +5252,10 @@ class GFHApp(tk.Tk):
         stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = EXPORT_DIR / f"GFH_Full_Inventory_Audit_Log_{stamp}.xlsx"
         variance_rows = self.db.get_rows_by_keys(self.loaded_keys) if self.loaded_keys else []
+        # Same exclusion filter as the Variance Audit tab — the log, the tab
+        # and the WhatsApp sends must all show the SAME devices: every device
+        # except IMEI-excluded ones.
+        variance_rows = self.filter_excluded_variance_rows(variance_rows)
         final_results = final_results or []
 
         wb = openpyxl.Workbook()
