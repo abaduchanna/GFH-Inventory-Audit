@@ -1,21 +1,16 @@
 # GFH Inventory Audit
 
-GFH Telecom inventory count audit automation for VidaPay stores — verifies store counts, renders the district-colored status image, and reports via WhatsApp. Includes the Timesheet cross-check variant.
+Inventory **count audit** for VidaPay stores: import the count sheet and the
+store list, match scanned units against expected inventory, compute variances
+per store/district, render a status image, and send the report to WhatsApp
+groups. A Timesheet variant adds employee timesheet processing.
 
-## Apps
-
-| File | Purpose |
-|------|---------|
-| `GFH_Inventory_Audit.py` | Inventory count audit — status image, WhatsApp summary |
-| `GFH_Inventory_Audit_Timesheet.py` | Timesheet cross-check — per-store employee matching, plain count reminders |
+## Highlights
+- Import XLSX for store accounts, employees and excluded IMEIs — each with a
+  matching **Download Template** button
+- Variance pipeline with per-IMEI matching, excluded-IMEI filters
+- District summaries, status image render, WhatsApp reporting
+- Timesheet automation variant (`GFH_Inventory_Audit_Timesheet.py`)
 
 ## Build
-
-- **Locally:** run `build_GFH_Inventory_Audit.bat` or `build_GFH_Inventory_Audit_Timesheet.bat` — each force-syncs this repo from GitHub (self-heals origin, resets to `origin/main`), then builds the exe with PyInstaller into `C:\Users\AbadUmairChanna\Downloads\GitHub`.
-- **CI:** every push to `main` builds both exes on GitHub Actions and publishes a **GFH Build N** release with the exes attached.
-
-## Support modules
-
-- `logo_handler.py` — GFH Telecom logo/icon loading (shared)
-- `theme_manager.py` — dark theme helpers (shared)
-- `assets/`, `gfh_icon.ico`, `GFH_Telecom_Logo.png`, `stores.json` — bundled resources referenced by both `.spec` files
+Windows EXE built via GitHub Actions on push.
