@@ -17,7 +17,7 @@ a = Analysis(
     datas=[
         ('assets', 'assets'),
         ('GFH_Telecom_Logo.png', '.'),
-        ('gfh_icon.ico', '.'),
+        ('GFH_icon.ico', '.'),
         ('stores.json', '.'),
         ('theme_manager.py', '.'),
         ('logo_handler.py', '.'),
@@ -116,5 +116,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='gfh_icon.ico',
+    icon='GFH_icon.ico',
 )

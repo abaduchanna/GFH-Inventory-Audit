@@ -2635,7 +2635,7 @@ class GFHApp(tk.Tk):
         _icon_set = False
         _meipass = getattr(_sys, "_MEIPASS", None)
         if _meipass:
-            for _ico_name in ("gfh_icon.ico", "gfh_telecom_llc_icon.ico"):
+            for _ico_name in ("GFH_icon.ico", "gfh_telecom_llc_icon.ico"):
                 _ico_path = _os.path.join(_meipass, _ico_name)
                 if _os.path.exists(_ico_path):
                     try:
@@ -2648,7 +2648,7 @@ class GFHApp(tk.Tk):
             # Also try running from source (not frozen): use the .ico shipped
             # alongside the script directly, no need for the base64 fallback.
             try:
-                _src_ico = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "gfh_icon.ico")
+                _src_ico = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "GFH_icon.ico")
                 if _os.path.exists(_src_ico):
                     self.iconbitmap(default=_src_ico)
                     _icon_set = True
